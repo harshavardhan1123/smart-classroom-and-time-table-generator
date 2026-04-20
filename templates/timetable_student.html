@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block title %}Student Timetable – UniSchedule{% endblock %}
+{% block content %}
+<div class="page-header">
+    <h2>🎓 Student Timetable View</h2>
+    <p>Your personal class schedule</p>
+</div>
+
+<div class="card no-print">
+    <div class="filter-bar">
+        <span id="viewLabel" style="font-weight:600; color: var(--text-primary, #e0e0e0); margin-right: 10px;">Showing: Today's Schedule</span>
+        <button class="btn btn-outline" id="toggleViewBtn" onclick="toggleView()">📅 View Full Week</button>
+        <button class="btn btn-outline" onclick="exportPrint()">🖨️ Print / PDF</button>
+    </div>
+</div>
+
+<div id="timetableArea"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let university = {}, allEntries = [], todayEntries = [], attendanceData = null;
+    let showingFullWeek = false;
+    const studentId = {{ session.get('user_id', 0) }};
+
+    function getTodayName() {
+        const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        return days[new Date().getDay()];
+    }
+
+    async function init() {
+        university = await api('/api/university');
+
+        // Load attendance data
+        try {
+            attendanceData = await api(`/api/attendance/student/${studentId}`);
+        } catch(e) {
+            attendanceData = null;
+        }
+
+        // Load today's timetable first
+        const today = getTodayName();
+        todayEntries = await api(`/api/timetable/student/${studentId}?day=${today}`);
+        
+        renderTimetable(todayEntries, true);
+    }
+
+    async function toggleView() {
+        showingFullWeek = !showingFullWeek;
+        const btn = document.getElementById('toggleViewBtn');
+        const label = document.getElementById('viewLabel');
+
+        if (showingFullWeek) {
+            // Load full week if not loaded
+            if (allEntries.length === 0) {
+                allEntries = await api(`/api/timetable/student/${studentId}`);
+            }
+            btn.textContent = '📆 View Today Only';
+            label.textContent = 'Showing: Full Week Schedule';
+            renderTimetable(allEntries, false);
+        } else {
+            btn.textContent = '📅 View Full Week';
+            label.textContent = "Showing: Today's Schedule";
+            renderTimetable(todayEntries, true);
+        }
+    }
+
+    // Build a set of course_ids that have attendance < 75%
+    function getLowAttendanceCourseIds() {
+        if (!attendanceData || !attendanceData.subjects) return new Set();
+        const low = new Set();
+        attendanceData.subjects.forEach(s => {
+            if (s.percentage < 75) low.add(s.course_id);
+        });
+        return low;
+    }
+
+    function renderTimetable(entries, isTodayView) {
+        const days = university.days || ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
+        const timeslots = university.timeslots || [];
+        const area = document.getElementById('timetableArea');
+        const lowCourses = getLowAttendanceCourseIds();
+
+        if (entries.length === 0) {
+            const msg = isTodayView 
+                ? 'No classes scheduled for today. Click "View Full Week" to see your complete schedule.'
+                : 'No classes scheduled. You may not be assigned to a section yet.';
+            area.innerHTML = `<div class="card"><div class="empty-state"><div class="icon">🎓</div><p>${msg}</p></div></div>`;
+            return;
+        }
+
+        // Determine which days to show
+        const displayDays = isTodayView ? [getTodayName()] : days;
+
+        area.innerHTML = `
+        <div class="card">
+            <div class="card-title">📅 ${isTodayView ? "Today's Schedule (" + getTodayName() + ")" : 'Weekly Schedule'}</div>
+            <div class="timetable-grid" id="ttGrid"></div>
+        </div>
+        <div class="card">
+            <div class="card-title">📋 Class Details</div>
+            <div class="table-wrapper">
+                <table>
+                    <thead><tr><th>Day</th><th>Time</th><th>Course</th><th>Faculty</th><th>Room</th><th>Attendance</th></tr></thead>
+                    <tbody>${entries.map(e => {
+                        const isLow = lowCourses.has(e.course_id);
+                        const attInfo = getAttendanceForCourse(e.course_id);
+                        const rowStyle = isLow ? ' style="background:rgba(255,60,60,0.15);"' : '';
+                        return `
+                        <tr${rowStyle}>
+                            <td>${e.day}</td>
+                            <td>${e.timeslot}</td>
+                            <td>${e.course_code} – ${e.course_name}${isLow ? ' <span style="color:#ff4444;font-weight:700;" title="Attendance below 75%">⚠</span>' : ''}</td>
+                            <td>${e.faculty_name}</td>
+                            <td>${e.room_number}</td>
+                            <td>${attInfo}</td>
+                        </tr>
+                    `}).join('')}</tbody>
+                </table>
+            </div>
+        </div>
+        `;
+        // Render grid with attendance highlighting
+        renderTimetableGridWithAttendance('ttGrid', entries, displayDays, timeslots, lowCourses);
+    }
+
+    function getAttendanceForCourse(courseId) {
+        if (!attendanceData || !attendanceData.subjects) return '—';
+        const subj = attendanceData.subjects.find(s => s.course_id === courseId);
+        if (!subj) return '—';
+        const color = subj.percentage < 75 ? '#ff4444' : '#4caf50';
+        return `<span style="color:${color};font-weight:700;">${subj.percentage}%</span>`;
+    }
+
+    function renderTimetableGridWithAttendance(containerId, entries, days, timeslots, lowCourses) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+
+        container.style.gridTemplateColumns = `100px repeat(${days.length}, 1fr)`;
+
+        let html = '<div class="tt-header"></div>';
+        days.forEach(d => { html += `<div class="tt-header">${d.substring(0, 3)}</div>`; });
+
+        timeslots.forEach(ts => {
+            html += `<div class="tt-time">${ts}</div>`;
+            days.forEach(day => {
+                const entry = entries.find(e => e.day === day && e.timeslot === ts);
+                if (entry) {
+                    const isLow = lowCourses.has(entry.course_id);
+                    const deptIdx = (entry.course_id || 0) % 8;
+                    const cellStyle = isLow 
+                        ? 'style="background:rgba(255,60,60,0.25); border: 2px solid #ff4444;"' 
+                        : '';
+                    html += `<div class="tt-cell dept-${deptIdx}" ${cellStyle}>
+                        <div class="course-name">${entry.course_code || entry.course_name}${isLow ? ' ⚠' : ''}</div>
+                        <div class="faculty-name">${entry.faculty_name}</div>
+                        <div class="room-name">${entry.room_number}</div>
+                    </div>`;
+                } else {
+                    html += '<div class="tt-cell empty">—</div>';
+                }
+            });
+        });
+
+        container.innerHTML = html;
+    }
+
+    init();
+</script>
+{% endblock %}
