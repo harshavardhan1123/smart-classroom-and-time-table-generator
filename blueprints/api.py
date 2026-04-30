@@ -9,7 +9,7 @@ from datetime import date as date_type
 import requests as http_requests
 
 from models import (db, University, Department, Course, Faculty, Student, Section,
-                    Classroom, TimetableEntry, Attendance,
+                    Classroom, TimetableEntry, Attendance, FacultyAbsence,
                     faculty_courses, student_courses, section_students,
                     generate_email_from_name, generate_default_password, ensure_unique_email)
 from timetable_generator import generate_timetable
@@ -268,11 +268,38 @@ def delete_faculty(id):
     return jsonify({'message': 'Deleted'})
 
 
+@api.route('/faculty/<int:id>/photo', methods=['POST'])
+@login_required
+@role_required('admin')
+def upload_faculty_photo(id):
+    import os
+    f = Faculty.query.get_or_404(id)
+    if 'photo' not in request.files:
+        return jsonify({'error': 'No file provided'}), 400
+    file = request.files['photo']
+    if file.filename == '':
+        return jsonify({'error': 'No file selected'}), 400
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
+        return jsonify({'error': 'Invalid file type'}), 400
+    upload_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'static', 'uploads', 'faculty')
+    os.makedirs(upload_dir, exist_ok=True)
+    filename = f"fac_{id}{ext}"
+    file.save(os.path.join(upload_dir, filename))
+    f.photo_url = f'/static/uploads/faculty/{filename}'
+    db.session.commit()
+    return jsonify({'photo_url': f.photo_url})
+
+
 # ─── Student CRUD ────────────────────────────────────────────
 @api.route('/students', methods=['GET'])
 @login_required
 def get_students():
-    students = Student.query.all()
+    section_id = request.args.get('section_id')
+    if section_id:
+        students = Student.query.filter(Student.sections.any(id=section_id)).all()
+    else:
+        students = Student.query.all()
     return jsonify([s.to_dict() for s in students])
 
 
@@ -442,10 +469,9 @@ def get_faculty_timetable(faculty_id):
 
 @api.route('/timetable/student/<int:student_id>', methods=['GET'])
 @login_required
-@role_required('student')
 def get_student_timetable(student_id):
     # Security: enforce that student can only access their own timetable
-    if session.get('user_id') != student_id:
+    if session.get('role') == 'student' and session.get('user_id') != student_id:
         return jsonify({'error': 'Access denied'}), 403
 
     student = Student.query.get_or_404(student_id)
@@ -472,11 +498,10 @@ def get_student_timetable(student_id):
 # ─── Attendance APIs ────────────────────────────────────────
 @api.route('/attendance/student/<int:student_id>', methods=['GET'])
 @login_required
-@role_required('student')
 def get_student_attendance(student_id):
     """Get subject-wise and overall attendance for a student."""
     # Security: student can only view their own attendance
-    if session.get('user_id') != student_id:
+    if session.get('role') == 'student' and session.get('user_id') != student_id:
         return jsonify({'error': 'Access denied'}), 403
 
     student = Student.query.get_or_404(student_id)
@@ -976,3 +1001,106 @@ def chat():
         return jsonify({'reply': 'Could not connect to the AI service. Check your network.'}), 503
     except Exception as e:
         return jsonify({'reply': f'Sorry, I encountered an error: {str(e)}'}), 500
+
+
+# ─── Faculty Absence API ──────────────────────────────────────
+@api.route('/faculty/absences', methods=['GET'])
+@login_required
+def get_faculty_absences():
+    """Retrieve all recorded faculty absences."""
+    absences = FacultyAbsence.query.all()
+    return jsonify([a.to_dict() for a in absences])
+
+@api.route('/admin/add-student', methods=['POST'])
+@login_required
+@role_required('admin')
+def add_new_student():
+    data = request.json
+    name = data.get('name')
+    email = data.get('email')
+    dept_id = data.get('department_id')
+    
+    if not all([name, email, dept_id]):
+        return jsonify({"error": "Missing fields"}), 400
+
+    # 1. Find sections for this dept
+    sections = Section.query.filter_by(department_id=dept_id).all()
+    if not sections:
+        return jsonify({"error": "No sections found for this department"}), 400
+        
+    # 2. Find section with smallest strength
+    target_section = min(sections, key=lambda s: s.student_count)
+    
+    # 3. Create Student
+    student_count = Student.query.count()
+    new_uid = f"STU{str(student_count + 1).zfill(4)}"
+    
+    new_student = Student(
+        student_uid=new_uid,
+        name=name,
+        email=email,
+        department_id=dept_id
+    )
+    
+    from models import generate_default_password
+    pwd = generate_default_password(name)
+    new_student.set_password(pwd)
+    
+    db.session.add(new_student)
+    
+    # 4. Link to Section
+    target_section.students.append(new_student)
+    target_section.student_count += 1
+    
+    db.session.commit()
+    
+    return jsonify({
+        "success": True,
+        "message": f"Student {name} successfully enrolled in {target_section.department.name} - Section {target_section.name}",
+        "credentials": {"email": email, "password": pwd},
+        "student_uid": new_uid,
+        "section_id": target_section.id,
+        "section_name": target_section.name
+    })
+
+@api.route('/faculty/report-absence', methods=['POST'])
+@login_required
+@role_required('faculty', 'admin')
+def report_faculty_absence():
+    """Save or update faculty absence in database."""
+    data = request.json
+    fac_id = data.get('faculty_id') # This is the internal DB id
+    date_str = data.get('date')
+    slots = data.get('slots', [])
+    reason = data.get('reason', '')
+
+    if not all([fac_id, date_str]):
+        return jsonify({'error': 'faculty_id and date are required'}), 400
+
+    try:
+        abs_date = date_type.fromisoformat(date_str)
+    except ValueError:
+        return jsonify({'error': 'Invalid date format'}), 400
+
+    # Handle internal vs UID
+    faculty = Faculty.query.get(fac_id)
+    if not faculty:
+        faculty = Faculty.query.filter_by(faculty_uid=fac_id).first()
+    
+    if not faculty:
+        return jsonify({'error': 'Faculty not found'}), 404
+
+    # Remove existing record for this faculty+date if any
+    FacultyAbsence.query.filter_by(faculty_id=faculty.id, date=abs_date).delete()
+
+    if slots:
+        new_abs = FacultyAbsence(
+            faculty_id=faculty.id,
+            date=abs_date,
+            slots=json.dumps(slots),
+            reason=reason
+        )
+        db.session.add(new_abs)
+
+    db.session.commit()
+    return jsonify({'message': 'Absence record updated', 'slots': slots})

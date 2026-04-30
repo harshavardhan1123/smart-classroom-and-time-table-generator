@@ -47,6 +47,7 @@
         <table id="facDataTable" class="data-table">
             <thead>
                 <tr>
+                    <th>Photo</th>
                     <th>ID</th>
                     <th>Name</th>
                     <th>Department</th>
@@ -119,12 +120,19 @@
         }
         tbody.innerHTML = facultyList.map(f => `
         <tr>
+            <td>
+                ${f.photo_url 
+                    ? `<img src="${f.photo_url}" style="width:42px;height:42px;border-radius:50%;object-fit:cover;border:2px solid #e5e7eb;">` 
+                    : `<div style="width:42px;height:42px;border-radius:50%;background:linear-gradient(135deg,#7c3aed,#4f8ef7);color:#fff;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;">${f.name.replace(/^Dr\.\s*/i,'').split(' ').map(w=>w[0]).join('').toUpperCase().slice(0,2)}</div>`
+                }
+            </td>
             <td><span class="badge badge-purple">${f.faculty_uid}</span></td>
             <td>${f.name}</td>
             <td>${f.department_name}</td>
             <td>${(f.courses_can_teach_names || []).join(', ') || '—'}</td>
             <td class="actions-cell">
                 <button class="btn btn-outline btn-sm" title="View Timetable" onclick="window.location.href='/timetable/faculty?id=${f.id}'">📅</button>
+                <button class="btn btn-outline btn-sm" title="Upload Photo" onclick="openPhotoUpload(${f.id},'${f.name}')">📷</button>
                 <button class="btn btn-outline btn-sm" onclick="editFac(${f.id})">✏️</button>
                 <button class="btn btn-danger btn-sm" onclick="deleteFac(${f.id})">🗑️</button>
             </td>
@@ -205,5 +213,66 @@
     }
 
     init();
+
+    // ─── Photo Upload (Admin Only) ───────────────────────────────────────
+    let photoUploadFacId = null;
+    function openPhotoUpload(facId, facName) {
+        photoUploadFacId = facId;
+        document.getElementById('photoUploadLabel').textContent = `Upload photo for ${facName}`;
+        document.getElementById('photoUploadModal').style.display = 'flex';
+    }
+    function closePhotoUpload() {
+        photoUploadFacId = null;
+        document.getElementById('photoUploadModal').style.display = 'none';
+        document.getElementById('photoFileInput').value = '';
+        document.getElementById('photoPreview').style.display = 'none';
+    }
+    document.getElementById('photoFileInput').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = ev => {
+            const img = document.getElementById('photoPreview');
+            img.src = ev.target.result;
+            img.style.display = 'block';
+        };
+        reader.readAsDataURL(file);
+    });
+    async function savePhoto() {
+        const file = document.getElementById('photoFileInput').files[0];
+        if (!file || !photoUploadFacId) { showToast('Please select an image first.', 'warning'); return; }
+        const formData = new FormData();
+        formData.append('photo', file);
+        const res = await fetch(`/api/faculty/${photoUploadFacId}/photo`, {
+            method: 'POST',
+            headers: { 'X-CSRFToken': getCsrfToken() },
+            body: formData
+        });
+        if (res.ok) {
+            showToast('✅ Photo updated!', 'success');
+            closePhotoUpload();
+            loadFaculty();
+        } else {
+            showToast('❌ Upload failed.', 'danger');
+        }
+    }
+    function getCsrfToken() {
+        const meta = document.querySelector('meta[name="csrf-token"]');
+        return meta ? meta.getAttribute('content') : '';
+    }
 </script>
+
+<!-- Photo Upload Modal -->
+<div id="photoUploadModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:9999;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:16px;padding:32px;max-width:420px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+    <h3 id="photoUploadLabel" style="margin:0 0 16px;font-size:1rem;color:#1a1a2e;">Upload Photo</h3>
+    <img id="photoPreview" style="display:none;width:100px;height:100px;border-radius:50%;object-fit:cover;margin:0 auto 16px;display:block;" />
+    <input type="file" id="photoFileInput" accept="image/*" style="display:block;width:100%;margin-bottom:16px;padding:8px;border:1px dashed #e5e7eb;border-radius:8px;">
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button class="btn btn-outline" onclick="closePhotoUpload()">Cancel</button>
+      <button class="btn btn-primary" onclick="savePhoto()">📷 Save Photo</button>
+    </div>
+  </div>
+</div>
+
 {% endblock %}

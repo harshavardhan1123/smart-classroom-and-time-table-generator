@@ -20,7 +20,7 @@ def call_claude(system_prompt, messages, max_tokens=1000):
                 "X-Title": "UniSchedule"
             },
             data=json.dumps({
-                "model": "anthropic/claude-3.7-sonnet",
+                "model": "anthropic/claude-3.5-sonnet",
                 "messages": formatted_messages,
                 "max_tokens": max_tokens
             }),

@@ -4,7 +4,7 @@ Main application entry point. Configures Flask, registers blueprints, and starts
 """
 import os, sys
 
-from flask import Flask
+from flask import Flask, redirect
 from flask_wtf.csrf import CSRFProtect
 from flask_migrate import Migrate
 from dotenv import load_dotenv
@@ -29,6 +29,7 @@ app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///university.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = _secret_key
+app.config['WTF_CSRF_TIME_LIMIT'] = 86400  # 24 hours
 
 # ─── CSRF Protection ────────────────────────────────────────
 csrf = CSRFProtect(app)
@@ -51,15 +52,21 @@ from blueprints.api import api
 from blueprints.chatbot_admin import chatbot_admin_bp
 from blueprints.chatbot_faculty import chatbot_faculty_bp
 from blueprints.chatbot_student import chatbot_student_bp
+from blueprints.attendance import attendance_bp
 
 app.register_blueprint(auth)
 app.register_blueprint(admin)
 app.register_blueprint(faculty_bp)
 app.register_blueprint(student_bp)
-app.register_blueprint(api)  # url_prefix='/api' set in blueprint
+app.register_blueprint(chatbot_student_bp)
+app.register_blueprint(api)
+app.register_blueprint(attendance_bp)
 app.register_blueprint(chatbot_admin_bp)
 app.register_blueprint(chatbot_faculty_bp)
-app.register_blueprint(chatbot_student_bp)
+
+@app.route('/')
+def index():
+    return redirect('/login')
 
 # Exempt JSON-only blueprints from CSRF (protected by session auth)
 # Auth blueprint keeps CSRF for login form POST
@@ -69,9 +76,10 @@ csrf.exempt(faculty_bp)
 csrf.exempt(chatbot_admin_bp)
 csrf.exempt(chatbot_faculty_bp)
 csrf.exempt(chatbot_student_bp)
+csrf.exempt(attendance_bp)
 
 # ─── Run ─────────────────────────────────────────────────────
 if __name__ == '__main__':
-    port = int(os.getenv('FLASK_PORT', 5000))
+    port = int(os.getenv('FLASK_PORT', 5001))
     debug = os.getenv('FLASK_DEBUG', 'False').lower() in ('true', '1', 'yes')
     app.run(debug=debug, port=port)

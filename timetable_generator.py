@@ -20,8 +20,8 @@ from models import db, TimetableEntry, Section, Course, Faculty, Classroom, Univ
 from sqlalchemy import func
 import json, copy
 
-MAX_CLASSES_PER_DAY = 4   # per section (ensures free periods)
-MAX_BACKTRACK_DEPTH = 3   # how many assignments to undo when stuck
+MAX_CLASSES_PER_DAY = 6   # per section (allows up to 30 classes per week with 6 slots/day)
+MAX_BACKTRACK_DEPTH = 10  # increased to allow resolving complex conflicts
 LUNCH_SLOT = "12:00-1:00"
 
 

@@ -36,7 +36,7 @@ def faculty_app():
             "canTeach": [c.code for c in f.courses_can_teach],
             "assignedSections": assigned_secs,
             "password": "password",  # dummy — never used for auth
-            "photo": None
+            "photo": f.photo_url or None
         })
 
     sections_list = []
@@ -71,7 +71,7 @@ def faculty_app():
             "hostel": "Day Scholar",
             "advisor": "Faculty",
             "cgpa": 8.5,
-            "photo": None
+            "photo": s.photo_url or None
         })
 
     courses_list = []

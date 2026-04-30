@@ -3,11 +3,19 @@
 {% block content %}
 <div class="page-header">
     <h2>🎓 Student Timetable View</h2>
-    <p>Your personal class schedule</p>
+    <p>{% if session.get('role') != 'student' %}Select a student to view their schedule{% else %}Your personal class schedule{% endif %}</p>
 </div>
 
 <div class="card no-print">
     <div class="filter-bar">
+        {% if session.get('role') != 'student' %}
+        <select id="sectionSelect" onchange="loadStudents()" style="padding:8px; border-radius:6px; border:1px solid #e5e7eb; background:#fff; color:#333; font-family:inherit;">
+            <option value="">Select Section...</option>
+        </select>
+        <select id="studentSelect" onchange="onStudentSelect()" style="padding:8px; border-radius:6px; border:1px solid #e5e7eb; background:#fff; color:#333; font-family:inherit; min-width: 150px;">
+            <option value="">Select Student...</option>
+        </select>
+        {% endif %}
         <span id="viewLabel" style="font-weight:600; color: var(--text-primary, #e0e0e0); margin-right: 10px;">Showing: Today's Schedule</span>
         <button class="btn btn-outline" id="toggleViewBtn" onclick="toggleView()">📅 View Full Week</button>
         <button class="btn btn-outline" onclick="exportPrint()">🖨️ Print / PDF</button>
@@ -21,7 +29,11 @@
 <script>
     let university = {}, allEntries = [], todayEntries = [], attendanceData = null;
     let showingFullWeek = false;
-    const studentId = {{ session.get('user_id', 0) }};
+    
+    // Read from URL if present, otherwise use session if student, otherwise 0
+    let studentId = new URLSearchParams(window.location.search).get('id') 
+                    || {{ session.get('user_id', 0) if session.get('role') == 'student' else 0 }};
+    const isStudentRole = {{ 'true' if session.get('role') == 'student' else 'false' }};
 
     function getTodayName() {
         const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -30,19 +42,91 @@
 
     async function init() {
         university = await api('/api/university');
-
-        // Load attendance data
-        try {
-            attendanceData = await api(`/api/attendance/student/${studentId}`);
-        } catch(e) {
-            attendanceData = null;
+        
+        if (!isStudentRole) {
+            await initAdminDropdowns();
         }
 
-        // Load today's timetable first
-        const today = getTodayName();
-        todayEntries = await api(`/api/timetable/student/${studentId}?day=${today}`);
+        if (studentId && studentId != 0) {
+            await loadStudentData(studentId);
+        } else {
+            document.getElementById('timetableArea').innerHTML = `
+                <div class="card"><div class="empty-state">
+                    <div class="icon">🔍</div><p>Please select a section and student to view their timetable.</p>
+                </div></div>`;
+        }
+    }
+
+    async function initAdminDropdowns() {
+        const sections = await api('/api/sections');
+        const secSel = document.getElementById('sectionSelect');
+        if (!secSel) return;
+        secSel.innerHTML = '<option value="">Select Section...</option>' + 
+            sections.map(s => `<option value="${s.id}">${s.department_name} - ${s.name}</option>`).join('');
+    }
+
+    async function loadStudents() {
+        const secId = document.getElementById('sectionSelect').value;
+        const stuSel = document.getElementById('studentSelect');
+        if (!secId) {
+            stuSel.innerHTML = '<option value="">Select Student...</option>';
+            return;
+        }
+        stuSel.innerHTML = '<option value="">Loading...</option>';
+        const students = await api(`/api/students?section_id=${secId}`);
+        stuSel.innerHTML = '<option value="">Select Student...</option>' + 
+            students.map(s => `<option value="${s.id}">${s.student_uid} - ${s.name}</option>`).join('');
+    }
+
+    async function onStudentSelect() {
+        const stuId = document.getElementById('studentSelect').value;
+        if (!stuId) {
+            studentId = 0;
+            document.getElementById('timetableArea').innerHTML = `
+                <div class="card"><div class="empty-state">
+                    <div class="icon">🔍</div><p>Please select a student to view their timetable.</p>
+                </div></div>`;
+            return;
+        }
+        studentId = stuId;
+        // Update URL to make it shareable/refreshable
+        window.history.replaceState(null, '', `/timetable/student?id=${stuId}`);
+        await loadStudentData(studentId);
+    }
+
+    async function loadStudentData(id) {
+        studentId = id;
+        const area = document.getElementById('timetableArea');
+        area.innerHTML = '<div class="card"><div class="empty-state"><div class="loading-spinner"></div><p>Loading timetable...</p></div></div>';
         
-        renderTimetable(todayEntries, true);
+        try {
+            // Load attendance data
+            try {
+                attendanceData = await api(`/api/attendance/student/${id}`);
+            } catch(e) {
+                console.error("Attendance load failed", e);
+                attendanceData = null;
+            }
+
+            // Load today's timetable first
+            const today = getTodayName();
+            todayEntries = await api(`/api/timetable/student/${id}?day=${today}`);
+            
+            if (showingFullWeek) {
+                allEntries = await api(`/api/timetable/student/${id}`);
+                renderTimetable(allEntries, false);
+            } else {
+                renderTimetable(todayEntries, true);
+            }
+        } catch (err) {
+            console.error("Timetable load failed", err);
+            area.innerHTML = `
+                <div class="card"><div class="empty-state">
+                    <div class="icon">❌</div>
+                    <p>Failed to load timetable data. ${err.message || ''}</p>
+                    <button class="btn btn-primary" onclick="loadStudentData(${id})">Retry</button>
+                </div></div>`;
+        }
     }
 
     async function toggleView() {

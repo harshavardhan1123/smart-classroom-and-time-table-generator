@@ -149,6 +149,7 @@ class Faculty(db.Model):
     department_id = db.Column(db.Integer, db.ForeignKey('department.id'), nullable=False)
     available_slots = db.Column(db.Text, default='{}')  # JSON: {"Monday": ["9:00-10:00", ...], ...}
     password_hash = db.Column(db.String(255), nullable=True)
+    photo_url = db.Column(db.String(255), nullable=True)
     courses_can_teach = db.relationship('Course', secondary=faculty_courses, lazy='subquery',
                                          backref=db.backref('faculty_members', lazy=True))
 
@@ -172,7 +173,8 @@ class Faculty(db.Model):
             'department_name': self.department.name if self.department else '',
             'courses_can_teach': [c.id for c in self.courses_can_teach],
             'courses_can_teach_names': [c.name for c in self.courses_can_teach],
-            'available_slots': self.get_available_slots()
+            'available_slots': self.get_available_slots(),
+            'photo_url': self.photo_url or ''
         }
 
 
@@ -183,6 +185,7 @@ class Student(db.Model):
     email = db.Column(db.String(150), nullable=True, unique=True)
     department_id = db.Column(db.Integer, db.ForeignKey('department.id'), nullable=False)
     password_hash = db.Column(db.String(255), nullable=True)
+    photo_url = db.Column(db.String(255), nullable=True)
     courses_enrolled = db.relationship('Course', secondary=student_courses, lazy='subquery',
                                         backref=db.backref('enrolled_students', lazy=True))
 
@@ -202,7 +205,8 @@ class Student(db.Model):
             'department_id': self.department_id,
             'department_name': self.department.name if self.department else '',
             'courses_enrolled': [c.id for c in self.courses_enrolled],
-            'courses_enrolled_names': [c.name for c in self.courses_enrolled]
+            'courses_enrolled_names': [c.name for c in self.courses_enrolled],
+            'photo': self.photo_url or ''
         }
 
 
@@ -316,4 +320,27 @@ class Attendance(db.Model):
             'section_id': self.section_id,
             'date': self.date.isoformat() if self.date else '',
             'status': self.status
+        }
+
+
+class FacultyAbsence(db.Model):
+    __tablename__ = 'faculty_absence'
+    id = db.Column(db.Integer, primary_key=True)
+    faculty_id = db.Column(db.Integer, db.ForeignKey('faculty.id'), nullable=False)
+    date = db.Column(db.Date, nullable=False)
+    slots = db.Column(db.Text, nullable=False)  # JSON list of slots: ["9-10", "10-11"]
+    reason = db.Column(db.String(255), nullable=True)
+
+    faculty = db.relationship('Faculty', backref='absences')
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'faculty_id': self.faculty_id,
+            'faculty_uid': self.faculty.faculty_uid if self.faculty else '',
+            'faculty_email': self.faculty.email if self.faculty else '',
+            'day': self.date.isoformat() if self.date else '',
+            'date': self.date.isoformat() if self.date else '',
+            'slots': json.loads(self.slots) if self.slots else [],
+            'reason': self.reason
         }

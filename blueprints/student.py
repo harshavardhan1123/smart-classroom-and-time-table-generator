@@ -3,7 +3,8 @@ Student blueprint — student dashboard, timetable, attendance, marks pages + AP
 """
 from flask import Blueprint, render_template, request, jsonify, session, redirect, url_for
 
-from models import (db, Student, TimetableEntry)
+import json
+from models import (db, Student, TimetableEntry, FacultyAbsence)
 from blueprints.utils import login_required, role_required
 
 student_bp = Blueprint('student_bp', __name__)
@@ -67,7 +68,7 @@ def student_profile():
         'blood': 'O+',
         'dob': '2004-05-15',
         'cgpa': 8.75,
-        'photo': ''
+        'photo': s.photo_url or ''
     })
 
 
@@ -113,6 +114,7 @@ def student_timetable():
             'slot': slot_str,
             'course': e.course.code if e.course else '',
             'faculty': e.faculty.name if e.faculty else '',
+            'faculty_id': e.faculty.faculty_uid if e.faculty else '',
             'room': e.classroom.room_number if e.classroom else ''
         })
     return jsonify(res)
@@ -169,4 +171,11 @@ def student_marks():
 @student_bp.route('/student/api/faculty-absence')
 @login_required
 def student_faculty_absence():
-    return jsonify({})
+    absences = FacultyAbsence.query.all()
+    res = {}
+    for a in absences:
+        f_id = a.faculty_id
+        d_str = a.date.isoformat()
+        if f_id not in res: res[f_id] = {}
+        res[f_id][d_str] = json.loads(a.slots) if a.slots else []
+    return jsonify(res)
